@@ -89,32 +89,15 @@ def read_channels(file_name: str) -> dict:
     return channels
 
 
-async def send_notification(bot_client, service_bot_group: str,
-                            session_name: str, channel_name: str):
-
-    logger.info("Sending notification to {}", service_bot_group)
-
-    await bot_client.send_message(int(service_bot_group), f"""
-🔇 **{session_name}** joined and muted **{channel_name}**
-__at {datetime.now().strftime("%H:%M:%s")}__
-                                  """, link_preview=False)
-
-
-async def process_channel(client, session, bot_client, channel_name: str,
-                          channel_id: str, invite_hash: str,
-                          service_bot_group: str) -> None:
+async def process_channel(client, session, channel_name: str,
+                          channel_id: str, invite_hash: str) -> None:
 
     await join_channel(client, channel_name, invite_hash)
     await mute_channel(client, channel_id, channel_name)
 
-    await send_notification(bot_client, service_bot_group,
-                            session, channel_name)
 
-
-def process_account(bot_client, api_id: str, api_hash: str,
+def process_account(api_id: str, api_hash: str,
                     session: str, channels: list):
-
-    service_bot_group = config["SERVICE_BOT"]["notification_group_id"]
 
     logger.info("Connecting to account, session file name: {}", session)
 
@@ -126,8 +109,8 @@ def process_account(bot_client, api_id: str, api_hash: str,
                          channel_name, channel_id, invite_hash)
 
             client.loop.run_until_complete(
-                process_channel(client, session, bot_client, channel_name,
-                                channel_id, invite_hash, service_bot_group)
+                process_channel(client, session, channel_name,
+                                channel_id, invite_hash)
             )
 
 
@@ -140,14 +123,8 @@ def main():
     api_id = config["TG_CORE"]["api_id"]
     api_hash = config["TG_CORE"]["api_hash"]
 
-    service_bot_token = config["SERVICE_BOT"]["token"]
-    service_bot_session = config["SERVICE_BOT"]["session_name"]
-
-    bot_client = TelegramClient(service_bot_session, api_id, api_hash).start(
-        bot_token=service_bot_token)
-
     for account in accounts:
-        process_account(bot_client, api_id, api_hash, account, channels)
+        process_account(api_id, api_hash, account, channels)
 
 
 if __name__ == "__main__":
