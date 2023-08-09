@@ -1,6 +1,7 @@
-from datetime import datetime
 import configparser
 import logging
+import random
+import time
 import csv
 import sys
 
@@ -10,6 +11,7 @@ from telethon import TelegramClient, functions, types
 from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.errors.rpcerrorlist import UserAlreadyParticipantError
 from telethon.errors.rpcerrorlist import FloodWaitError
+from telethon.tl.types import NotificationSoundDefault
 
 
 class InterceptHandler(logging.Handler):
@@ -51,16 +53,27 @@ async def join_channel(client, channel_name: str, invite_hash: str) -> None:
                      channel_name)
 
 
-async def mute_channel(client, channel_id: str, channel_name: str) -> None:
+async def mute_channel(client, channel_id: str, channel_name: str,
+                       mode: int) -> None:
 
-    logger.info("Attempt to mute {}, where channel_id = {}",
-                channel_name, channel_id)
-    await client(functions.account.UpdateNotifySettingsRequest(
-        peer=int(channel_id),
-        settings=types.InputPeerNotifySettings(
-            mute_until=2**31 - 1
-        )
-    ))
+    if mode == 0:
+        logger.info("Attempt to mute {}, where channel_id = {}",
+                    channel_name, channel_id)
+        await client(functions.account.UpdateNotifySettingsRequest(
+            peer=int(channel_id),
+            settings=types.InputPeerNotifySettings(
+                mute_until=2**31 - 1
+            )
+        ))
+    else:
+        logger.info("Attempt to unmute {}, where channel_id = {}",
+                    channel_name, channel_id)
+        await client(functions.account.UpdateNotifySettingsRequest(
+            peer=int(channel_id),
+            settings=types.InputPeerNotifySettings(
+                sound=NotificationSoundDefault()
+            )
+        ))
 
 
 def read_accounts(file_name: str) -> list:
@@ -89,43 +102,53 @@ def read_channels(file_name: str) -> dict:
     return channels
 
 
-async def process_channel(client, session, channel_name: str,
-                          channel_id: str, invite_hash: str) -> None:
-
-    await join_channel(client, channel_name, invite_hash)
-    await mute_channel(client, channel_id, channel_name)
-
-
-def process_account(api_id: str, api_hash: str,
-                    session: str, channels: list):
-
-    logger.info("Connecting to account, session file name: {}", session)
-
-    with TelegramClient(session, api_id, api_hash) as client:
-        for channel_id in channels.keys():
-            channel_name = channels[channel_id][0]
-            invite_hash = channels[channel_id][1]
-            logger.debug("Retrieved info about {}: id={}, invite_hash={}",
-                         channel_name, channel_id, invite_hash)
-
-            client.loop.run_until_complete(
-                process_channel(client, session, channel_name,
-                                channel_id, invite_hash)
-            )
-
-
-def main():
-    logger.debug("Reading config.ini data")
-
-    accounts = read_accounts(config["DATA"]["sessions"])
-    channels = read_channels(config["DATA"]["channels"])
+def process_channel(channel_id: str, channel_name: str, invite_hash: str,
+                    accounts: list, mode: int) -> None:
 
     api_id = config["TG_CORE"]["api_id"]
     api_hash = config["TG_CORE"]["api_hash"]
 
     for account in accounts:
-        process_account(api_id, api_hash, account, channels)
+        with TelegramClient(account, api_id, api_hash) as client:
+            client.loop.run_until_complete(
+                process_account(client, channel_id,
+                                channel_name, invite_hash, mode)
+            )
+
+
+async def process_account(client, channel_id: str, channel_name: str,
+                          invite_hash: list, mode: int):
+
+    await join_channel(client, channel_name, invite_hash)
+    await mute_channel(client, channel_id, channel_name, mode)
+
+
+def main(mode: int, max_accounts: int):
+    accounts = read_accounts(config["DATA"]["sessions"])
+    channels = read_channels(config["DATA"]["channels"])
+
+    if max_accounts > len(accounts):
+        logger.error("Accounts to use {} > total accounts {}",
+                     max_accounts, len(accounts))
+        exit(0)
+    accounts = random.sample(accounts, max_accounts)
+    logger.debug("Sampled random {} accounts from list", max_accounts)
+
+    for channel_id in channels.keys():
+        channel_name = channels[channel_id][0]
+        invite_hash = channels[channel_id][1]
+        logger.debug("Retrieved info about {}: id={}, invite_hash={}",
+                     channel_name, channel_id, invite_hash)
+
+        process_channel(channel_id, channel_name, invite_hash, accounts, mode)
+
+        if list(channels.keys())[-1] != channel_id:
+            wait = 5
+            logger.info("Sleeping for {} s", wait)
+            time.sleep(wait)
 
 
 if __name__ == "__main__":
-    main()
+    mode = int(input("Enter 0 for mute, and 1 for unmute: "))
+    max_accounts = int(input("Enter number of accounts to use: "))
+    main(mode, max_accounts)
